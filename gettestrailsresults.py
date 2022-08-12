@@ -5,6 +5,7 @@ import pprint
 import requests
 
 from collections import defaultdict
+from copy import copy
 from requests.auth import HTTPBasicAuth
 
 """
@@ -78,6 +79,28 @@ class TestRail:
         response = requests.get(request, headers=self.headers, auth=HTTPBasicAuth(self.user, self.password))
         return json.loads(response.content)
 
+def exportResults(dict, filename):
+    # Flatten dictionnary for exporting in csv
+    flatten = [{'id': k,
+                'title': v['title'],
+                'tags': v['tags'],
+                'count': v['count'],
+                'failed': v['failed'],
+                'failure_rate': v['failure_rate']} for k, v in dict.items()]
+
+    sortedDict = sorted(flatten, key=lambda x: x['failure_rate'], reverse=True)
+    print(json.dumps(sortedDict, indent=4))
+
+    try:
+        with open(filename, 'w') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=['id', 'title', 'tags', 'count', 'failed', 'failure_rate'])
+            writer.writeheader()
+            for data in sortedDict:
+                writer.writerow(data)
+    except IOError:
+        print("I/O error")
+
+
 if __name__ == "__main__":
     pp = pprint.PrettyPrinter(indent=4)
 
@@ -85,12 +108,13 @@ if __name__ == "__main__":
     runs = testRail.get_runs(1, 10, 250)
     #print(json.dumps(data, indent=4, sort_keys=True))
 
-    results = defaultdict(lambda: {
+    testsSummary = defaultdict(lambda: {
                     'title': '',
                     'tags': '',
                     'count': 0,
                     'failed': 0,
                     'failure_rate': 0})
+    testsCandidateSummary = copy(testsSummary)
 
     # For all runs
     for run in runs:
@@ -100,35 +124,20 @@ if __name__ == "__main__":
 
         # For all tests executed in a run
         for test in tests:
-            count = results[test['case_id']]['count'] + 1
-            failed = results[test['case_id']]['failed']
+            dict = testsCandidateSummary if 'candidate' in test['custom_tags'] else testsSummary
+
+            count = dict[test['case_id']]['count'] + 1
+            failed = dict[test['case_id']]['failed']
             if test['status_id'] == TestRail.FAILED:
                 failed = failed + 1
-            results[test['case_id']] = {
+
+            dict[test['case_id']] = {
                 'title': test['title'],
                 'tags': test['custom_tags'],
                 'count': count,
                 'failed': failed,
                 'failure_rate': round((failed / count) * 100, 2)}
-
-    # Flatten dictionnary for exporting in csv
-    flatten = [{'id': k,
-                'title': v['title'],
-                'tags': v['tags'],
-                'count': v['count'],
-                'failed': v['failed'],
-                'failure_rate': v['failure_rate']} for k, v in results.items()]
-
-    dict = sorted(flatten, key=lambda x: x['failure_rate'], reverse=True)
-    print(json.dumps(dict, indent=4))
-
-    csv_file = "results.csv"
-    try:
-        with open(csv_file, 'w') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=['id', 'title', 'tags', 'count', 'failed', 'failure_rate'])
-            writer.writeheader()
-            for data in dict:
-                writer.writerow(data)
-    except IOError:
-        print("I/O error")
+    
+    exportResults(testsSummary, "non-candidates.csv")
+    exportResults(testsCandidateSummary, "candidates.csv")
 
