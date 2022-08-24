@@ -79,7 +79,45 @@ class TestRail:
         response = requests.get(request, headers=self.headers, auth=HTTPBasicAuth(self.user, self.password))
         return json.loads(response.content)
 
-def exportResults(dict, filename):
+class Confluence:
+    headers={'Content-Type': 'application/json',
+             'Accept': 'application/json'}
+
+    def createPage(self):
+        post = "https://kaloom-internal.atlassian.net/wiki/rest/api/content"
+        content = """<h1> Test content </h1>
+        <h2>Tesssst</h2>
+        """
+        data = {
+            "title": "Test Editor v2 Page from API",
+            "type": "page",
+            "space": {
+                "key": "RPT"
+            },
+            "status": "current",
+            "ancestors": [
+                {
+                    "id": "6587232"
+                }
+            ],
+            "body": {
+                "storage": {
+                    "value": content,
+                    "representation": "storage"
+                }
+            },
+            "metadata": {
+                "properties": {
+                    "editor": {
+                        "value": "v2"
+                    }
+                }
+            }
+        }
+        response = requests.post(post, data = json.dumps(data), headers=self.headers, auth=HTTPBasicAuth('f_atlassian-automation-user@kaloom.com', 'fCMG5ijqnJx86hKyUt2w3236'))
+        print(response.content)
+
+def toArray(dict):
     # Flatten dictionnary for exporting in csv
     flatten = [{'id': k,
                 'title': v['title'],
@@ -88,18 +126,20 @@ def exportResults(dict, filename):
                 'failed': v['failed'],
                 'failure_rate': v['failure_rate']} for k, v in dict.items()]
 
-    sortedDict = sorted(flatten, key=lambda x: x['failure_rate'], reverse=True)
-    print(json.dumps(sortedDict, indent=4))
+    sortedArray = sorted(flatten, key=lambda x: x['failure_rate'], reverse=True)
+    print(json.dumps(sortedArray, indent=4))
 
+    return sortedArray
+
+def exportCsv(array, filename):
     try:
         with open(filename, 'w') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=['id', 'title', 'tags', 'count', 'failed', 'failure_rate'])
             writer.writeheader()
-            for data in sortedDict:
+            for data in array:
                 writer.writerow(data)
     except IOError:
         print("I/O error")
-
 
 if __name__ == "__main__":
     pp = pprint.PrettyPrinter(indent=4)
@@ -117,27 +157,29 @@ if __name__ == "__main__":
     testsCandidateSummary = copy(testsSummary)
 
     # For all runs
-    for run in runs:
-        #print(json.dumps(run, indent=4, sort_keys=True))
-        tests = testRail.get_tests(run.get('id'))
-        #print(json.dumps(tests, indent=4, sort_keys=True))
+    #for run in runs:
+    #    #print(json.dumps(run, indent=4, sort_keys=True))
+    #    tests = testRail.get_tests(run.get('id'))
+    #    #print(json.dumps(tests, indent=4, sort_keys=True))
 
-        # For all tests executed in a run
-        for test in tests:
-            dict = testsCandidateSummary if 'candidate' in test['custom_tags'] else testsSummary
+    #    # For all tests executed in a run
+    #    for test in tests:
+    #        dict = testsCandidateSummary if 'candidate' in test['custom_tags'] else testsSummary
 
-            count = dict[test['case_id']]['count'] + 1
-            failed = dict[test['case_id']]['failed']
-            if test['status_id'] == TestRail.FAILED:
-                failed = failed + 1
+    #        count = dict[test['case_id']]['count'] + 1
+    #        failed = dict[test['case_id']]['failed']
+    #        if test['status_id'] == TestRail.FAILED:
+    #            failed = failed + 1
 
-            dict[test['case_id']] = {
-                'title': test['title'],
-                'tags': test['custom_tags'],
-                'count': count,
-                'failed': failed,
-                'failure_rate': round((failed / count) * 100, 2)}
-    
-    exportResults(testsSummary, "non-candidates.csv")
-    exportResults(testsCandidateSummary, "candidates.csv")
+    #        dict[test['case_id']] = {
+    #            'title': test['title'],
+    #            'tags': test['custom_tags'],
+    #            'count': count,
+    #            'failed': failed,
+    #            'failure_rate': round((failed / count) * 100, 2)}
 
+    #exportCsv(toArray(testsSummary), "non-candidates.csv")
+    #exportCsv(toArray(testsCandidateSummary), "candidates.csv")
+
+    confluence = Confluence() 
+    confluence.createPage()
