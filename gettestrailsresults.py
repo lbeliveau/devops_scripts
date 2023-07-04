@@ -1,3 +1,4 @@
+import argparse
 import csv
 import json
 import math
@@ -66,9 +67,39 @@ class TestRail:
         return array
 
     """
+    Returns a list of tests runs for a project which matches the filter (only one filter supported at the moment).
+    """
+    def get_runs_with_filter(self, project, suite, numEntries, filterField=None, filterValue=None):
+        array = []
+
+        # Number of items in the array
+        num = 0
+        page = 0
+
+        while num < numEntries:
+            request = self.url + "/index.php?/api/v2/get_runs/{}&suite_id={}&offset={}&limit={}".format(project, suite,
+                page * self.entriesPerRequest, self.entriesPerRequest)
+            response = requests.get(request, headers=self.headers, auth=HTTPBasicAuth(self.user, self.password))
+            if response.status_code != 200:
+                raise Exception("Bad status code {}".format(response.status_code))
+            else:
+                data = json.loads(response.content)
+                for x in data:
+                    if filterValue in x[filterField]:
+                        array.append(dict(x))
+                        num += 1
+
+                    if num >= numEntries:
+                        break
+
+            page += 1
+
+        return array
+
+    """
     Returns a list of test runs for a project.
     """
-    def get_runs(self, project, suite, numEntries):
+    def get_runs(self, project, suite, numEntries, nameFilter=None):
         return self._getRequestNumEntries(self.url + "/index.php?/api/v2/get_runs/{}&suite_id={}".format(project, suite),
             numEntries)
 
@@ -123,7 +154,7 @@ class Confluence:
     Update the content of an existing page.
     """
     def updatePage(self, id, space, title, version, content):
-        print("*** updatePage")
+        #print("*** updatePage")
         data = {
             "version": {
                 "number": version
@@ -164,7 +195,7 @@ class Confluence:
     Create a page.
     """
     def createPage(self, space, title, ancestor, content, overwrite=False):
-        print("*** createPage")
+        #print("*** createPage")
         data = {
             "title": title,
             "type": "page",
@@ -270,58 +301,71 @@ def exportTable(description, array):
     return content
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--debug', dest='debug', default=False, action='store_true')
+    args = parser.parse_args()
+
     pp = pprint.PrettyPrinter(indent=4)
 
     testRail = TestRail()
-    runs = testRail.get_runs(1, 10, 25)
-    #print(json.dumps(data, indent=4, sort_keys=True))
+    runs = testRail.get_runs_with_filter(1, 10, 50, "name", "TS8")
+    if args.debug:
+        print("size of runs: {}".format(len(runs)))
+        #print(json.dumps(runs, indent=4, sort_keys=True))
 
-    testsNonCandidateSummaryQL1 = defaultdict(lambda: {
+    nonCandidateTestsSummaryQL1 = defaultdict(lambda: {
                     'title': '',
                     'tags': '',
                     'count': 0,
                     'failed': 0,
                     'failure_rate': 0})
-    testsCandidateSummaryQL1 = copy(testsNonCandidateSummaryQL1)
-    testsNonCandidateSummaryQL2 = copy(testsNonCandidateSummaryQL1)
-    testsCandidateSummaryQL2 = copy(testsNonCandidateSummaryQL1)
+    candidateTestsSummaryQL1 = copy(nonCandidateTestsSummaryQL1)
+    nonCandidateTestsSummaryQL2 = copy(nonCandidateTestsSummaryQL1)
+    candidateTestsSummaryQL2 = copy(nonCandidateTestsSummaryQL1)
 
     testsSummary = {
         "QL1": {
-            "NonCandidate": testsNonCandidateSummaryQL1,
-            "Candidate": testsCandidateSummaryQL1
+            "NonCandidate": nonCandidateTestsSummaryQL1,
+            "Candidate": candidateTestsSummaryQL1
         },
         "QL2": {
-            "NonCandidate": testsNonCandidateSummaryQL2,
-            "Candidate": testsCandidateSummaryQL2
+            "NonCandidate": nonCandidateTestsSummaryQL2,
+            "Candidate": candidateTestsSummaryQL2
         }
     }
 
+    i = 0
     # For all runs
     for run in runs:
-        print("*** Run: " + run.get('description'))
-        print(json.dumps(run, indent=4, sort_keys=True))
-        tests = testRail.get_tests(run.get('id'))
-        ##print("*** size tests: {}".format(len(tests)))
-        ####print(json.dumps(tests, indent=4, sort_keys=True))
+        if args.debug:
+            print("run[{}]: {}".format(i, run.get('description')))
+            print(json.dumps(run, indent=4, sort_keys=True))
+        i += 1
 
+        # Get all tests executed in this specific run
+        tests = testRail.get_tests(run.get('id'))
+        if args.debug:
+            print("size of tests: {}".format(len(tests)))
+            #print(json.dumps(tests, indent=4, sort_keys=True))
+
+        j = 0
         # For all tests executed in a run
         for test in tests:
-            #print(json.dumps(test, indent=4, sort_keys=True))
+            if args.debug:
+                print("test[{}]".format(j))
+                print(json.dumps(test, indent=4, sort_keys=True))
+            j += 1
 
-            if re.search('ql1', test['custom_tags'], re.IGNORECASE):
+            if re.search('SDF-QL1', test['custom_tags'], re.IGNORECASE):
                 key1 = "QL1"
-            elif re.search('ql2', test['custom_tags'], re.IGNORECASE):
+            elif re.search('SDF-QL2', test['custom_tags'], re.IGNORECASE):
                 key1 = "QL2"
             else:
                 continue
             key2 = "Candidate" if re.search('candidate', test['custom_tags'], re.IGNORECASE) else "NonCandidate"
-            #print(key1)
-            #print(key2)
 
             summary = testsSummary.get(key1).get(key2)
 
-            #print(summary)
             count = summary[test['case_id']]['count'] + 1
             failed = summary[test['case_id']]['failed']
             if test['status_id'] == TestRail.FAILED:
@@ -334,10 +378,19 @@ if __name__ == "__main__":
                 'failed': failed,
                 'failure_rate': round((failed / count) * 100, 2)}
 
+    print("*** QL1 (len: {})".format(len(nonCandidateTestsSummaryQL1)))
+    print(json.dumps(nonCandidateTestsSummaryQL1, indent=4, sort_keys=True))
+    print("*** QL1 Candidate (len: {})".format(len(candidateTestsSummaryQL1)))
+    print(json.dumps(candidateTestsSummaryQL1, indent=4, sort_keys=True))
+    print("*** QL2 (len: {})".format(len(nonCandidateTestsSummaryQL2)))
+    print(json.dumps(nonCandidateTestsSummaryQL2, indent=4, sort_keys=True))
+    print("*** QL2 Candidate (len: {})".format(len(candidateTestsSummaryQL2)))
+    print(json.dumps(candidateTestsSummaryQL2, indent=4, sort_keys=True))
+
     #exportCsv(toArray(testsSummary), "non-candidates.csv")
     #exportCsv(toArray(testsCandidateSummary), "candidates.csv")
 
-    #content = exportTable("QL1 Non-candidates", toArray(testsNonCandidateSummaryQL1))
+    #content = exportTable("QL1 Non-candidates", toArray(nonCandidateTestsSummaryQL1))
     #confluence = Confluence() 
     #confluence.createPage("RPT", "Test Editor v2 Page from API", "6587232", content, overwrite=True)
 
